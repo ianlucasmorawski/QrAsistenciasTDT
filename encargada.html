@@ -40,6 +40,8 @@
   .err{color:var(--bad);font-weight:700;margin-top:10px}
   .toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:13px 22px;border-radius:14px;font-weight:700;display:none;z-index:9;max-width:92%}
   .menu{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .ubic{background:var(--ok-soft);color:#14532d;border-radius:14px;padding:12px 16px;margin-bottom:16px;font-size:16px}
+  .ubic a{color:var(--pri);font-weight:700}
   h2{font-size:20px;margin:0 0 10px}
   @media (max-width:820px){.grid{grid-template-columns:1fr}}
 </style>
@@ -88,8 +90,8 @@ async function login(error, sedePrevia) {
     try {
       const r = await api('encargadaLogin', { sede, pin });
       try { localStorage.setItem('tdt_sede', sede); } catch (e) {}
-      Object.assign(S, { sede: r.sede, tok: r.tok, nombre: r.nombre, tieneUbicacion: r.tieneUbicacion, radio: r.radio });
-      ses.set({ sede: S.sede, tok: S.tok, nombre: S.nombre, tieneUbicacion: S.tieneUbicacion, radio: S.radio, dia: new Date().toDateString() });
+      Object.assign(S, { sede: r.sede, tok: r.tok, nombre: r.nombre, tieneUbicacion: r.tieneUbicacion, radio: r.radio, lat: r.lat, lng: r.lng, direccion: r.direccion || '' });
+      ses.set({ sede: S.sede, tok: S.tok, nombre: S.nombre, tieneUbicacion: S.tieneUbicacion, radio: S.radio, lat: S.lat, lng: S.lng, direccion: S.direccion, dia: new Date().toDateString() });
       principal();
     } catch (e) { login(e.message, sede); }
   };
@@ -99,16 +101,18 @@ async function login(error, sedePrevia) {
 function principal() {
   $('#app').innerHTML = `<div class="top"><h1>${esc(S.sede)}<div class="hint" style="font-weight:400">${esc(S.nombre || '')}</div></h1>
       <button class="btn sec sm" id="salir">Salir</button></div>
-    ${S.tieneUbicacion ? '' : `<div class="aviso">⚠️ Esta sede todavía no tiene ubicación cargada, así que nadie puede registrarse. Estando en la sede, tocá <b>“Guardar ubicación de la sede”</b>.</div>`}
+    ${S.tieneUbicacion ? `<div class="ubic">📍 <b>${esc(S.direccion || S.nombre || S.sede)}</b> · se acepta hasta <b>${esc(S.radio)} m</b> ·
+        <a href="https://www.google.com/maps?q=${S.lat},${S.lng}" target="_blank" rel="noopener">Ver en el mapa ↗</a></div>`
+      : `<div class="aviso">⚠️ Esta sede todavía no tiene ubicación cargada, así que nadie puede registrarse. Estando en la sede, tocá <b>“Guardar ubicación de la sede”</b>.</div>`}
     <div class="grid">
       <div class="card qrbox"><h2>Escaneá con la cámara del celular</h2>
         <div id="qr"></div><div class="bar"><i id="bar" style="width:100%"></i></div>
-        <div class="hint" id="cuenta">El código cambia cada 30 segundos</div></div>
+        <div class="hint" id="cuenta">El código cambia cada minuto</div></div>
       <div class="card"><h2>Registros de hoy <span class="hint" id="cant"></span></h2><div id="lista"><p class="hint">Todavía no hay registros.</p></div>
-        <div class="menu"><button class="btn sec sm" id="ubic">📍 Guardar ubicación de la sede</button><button class="btn sec sm" id="cerrar">Cerrar el día</button></div></div>
+        <div class="menu">${S.tieneUbicacion ? '' : '<button class="btn sec sm" id="ubic">📍 Guardar ubicación de la sede</button>'}<button class="btn sec sm" id="cerrar">Cerrar el día</button></div></div>
     </div>`;
   $('#salir').onclick = () => { ses.del(); login(); };
-  $('#ubic').onclick = guardarUbicacion;
+  if ($('#ubic')) $('#ubic').onclick = guardarUbicacion;
   $('#cerrar').onclick = cerrarDia;
   pantallaEncendida();
   nuevoQr(); cargarLista();
@@ -123,7 +127,7 @@ async function nuevoQr() {
     window.__ultimaUrl = url.toString();
     const q = qrcode(0, 'M'); q.addData(url.toString()); q.make();
     $('#qr').innerHTML = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
-    restante = r.segundos; tic();
+    restante = r.segundos; S.periodo = r.periodo || 60; tic();
     siguiente = setTimeout(nuevoQr, Math.max(3, r.segundos) * 1000);
   } catch (e) {
     if (/Sesión vencida/.test(e.message)) { ses.del(); return login(e.message); }
@@ -132,7 +136,7 @@ async function nuevoQr() {
 }
 function tic() {
   clearInterval(S._tic);
-  const tot = 30;
+  const tot = S.periodo || 60;
   const pintar = () => { $('#bar').style.width = Math.max(0, restante / tot * 100) + '%'; $('#cuenta').textContent = `El código cambia en ${Math.max(0, restante)} s`; };
   pintar(); S._tic = setInterval(() => { restante--; pintar(); }, 1000);
 }
@@ -167,8 +171,8 @@ function guardarUbicacion() {
     navigator.geolocation.clearWatch(w);
     if (!mejor) return toast('No se pudo obtener la ubicación', true);
     try {
-      await api('guardarUbicacion', { sede: S.sede, tok: S.tok, lat: mejor.coords.latitude, lng: mejor.coords.longitude, acc: mejor.coords.accuracy });
-      S.tieneUbicacion = true; const s = ses.get(); if (s) { s.tieneUbicacion = true; ses.set(s); }
+      const r = await api('guardarUbicacion', { sede: S.sede, tok: S.tok, lat: mejor.coords.latitude, lng: mejor.coords.longitude, acc: mejor.coords.accuracy });
+      Object.assign(S, { tieneUbicacion: true, lat: r.lat, lng: r.lng }); const s = ses.get(); if (s) { Object.assign(s, { tieneUbicacion: true, lat: r.lat, lng: r.lng }); ses.set(s); }
       toast('✔ Ubicación guardada (precisión ' + Math.round(mejor.coords.accuracy) + ' m)'); principal();
     } catch (e) { toast(e.message, true); }
   }, 10000);
