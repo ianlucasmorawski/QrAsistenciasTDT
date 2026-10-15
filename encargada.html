@@ -184,7 +184,7 @@ function configurarCap(error, corregir) {
   $('#app').innerHTML = `<div class="top"><h1>${esc(S.nombre)}<div class="hint" style="font-weight:400">Capacitación · hoy</div></h1><button class="btn sec sm" id="salir">Salir</button></div>
     <div class="card cfg"><h2>📍 ${corregir ? 'Corregir el lugar de la capacitación' : '¿Dónde es la capacitación?'}</h2>
       <p class="hint" style="margin-top:0">${corregir ? 'Se puede corregir mientras nadie se haya registrado todavía.' : 'Se carga una vez. Se puede corregir mientras nadie se haya registrado.'}</p>
-      <label>Dirección (es lo que van a ver todos)</label><input id="dir" placeholder="Ej: Granaderos 1008, Del Viso" maxlength="200" value="${esc(S.direccion || '')}">
+      <label>Dirección (es lo que van a ver todos)</label><input id="dir" name="lugar-capacitacion" autocomplete="off" placeholder="Ej: Av. Siempre Viva 123, Del Viso" maxlength="200" value="${esc(S.direccion || '')}">
       <div class="row2"><div><label>Desde (opcional)</label><input id="desde" type="time" value="${esc(S.desde || '')}"></div><div><label>Hasta (opcional)</label><input id="hasta" type="time" value="${esc(S.hasta || '')}"></div></div>
       <label>Distancia permitida (metros)</label><input id="radio" type="number" inputmode="numeric" value="${esc(S.radio || 300)}" min="50" max="2000">
       ${error ? `<div class="err">${esc(error)}</div>` : ''}
@@ -192,7 +192,7 @@ function configurarCap(error, corregir) {
       <button class="btn full" id="gps">📍 Usar mi ubicación actual (celular, estando en el lugar)</button>
       <button class="btn sec full" id="buscar">🔎 Buscar la dirección en el mapa</button>
       <p class="o">— o —</p>
-      <label>Pegá el link de Google Maps del lugar</label><input id="link" placeholder="https://maps.app.goo.gl/…">
+      <label>Pegá el link de Google Maps del lugar</label><input id="link" name="link-mapa" autocomplete="off" placeholder="https://maps.app.goo.gl/…">
       <button class="btn sec full" id="conLink">Guardar con el link</button>
       ${corregir ? '<button class="btn sec full" id="volver">← Volver al QR</button>' : ''}</div>`;
   $('#salir').onclick = salir;
