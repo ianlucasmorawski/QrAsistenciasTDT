@@ -69,7 +69,7 @@ function pantalla(html, clase) { const a = $('#app'); a.className = 'card ' + (c
 
 // ---------- 1. Sin QR ----------
 function sinQr() {
-  pantalla(`<div class="big">📷</div><h1>Escaneá el QR de tu sede</h1><p>Abrí la cámara del celular y apuntá al código que muestra la encargada en la pantalla.</p>
+  pantalla(`<div class="big">📷</div><h1>Escaneá el QR</h1><p>Abrí la cámara del celular y apuntá al código que muestra la encargada en la pantalla.</p>
     ${mem.get('nombre') ? `<small>Este celular está registrado a nombre de <b>${esc(mem.get('nombre'))}</b>.</small>` : ''}`);
 }
 
@@ -116,7 +116,8 @@ function ubicacion() {
 // ---------- 4. Registrar ----------
 async function registrar() {
   const nombre = mem.get('nombre');
-  pantalla(`<div class="spin"></div><h1>Registrando tu asistencia…</h1><p>Confirmando que estás en la sede. Puede tardar unos segundos.</p><span class="sede">${esc(SEDE)}</span>`);
+  const esCap = /^CAP-\d+$/.test(SEDE);
+  pantalla(`<div class="spin"></div><h1>Registrando tu asistencia…</h1><p>Confirmando que estás en ${esCap ? 'el lugar de la capacitación' : 'la sede'}. Puede tardar unos segundos.</p><span class="sede">${esCap ? '🎓 Capacitación' : esc(SEDE)}</span>`);
   try {
     const pos = await ubicacion();
     const r = await api('marcar', { s: SEDE, t: TOKEN, dni: mem.get('dni'), dev: dispositivo(), lat: pos.lat, lng: pos.lng, acc: pos.acc });
