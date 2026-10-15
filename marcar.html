@@ -59,10 +59,19 @@ function dispositivo() {
   }
   return d;
 }
-async function api(accion, datos) {
-  const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || 'Error');
+// Si hay mucha gente a la vez (o se corta la conexión), reintenta sola unas veces antes de mostrar error.
+async function api(accion, datos, intento = 0) {
+  let j;
+  try {
+    const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
+    j = await r.json();
+  } catch (e) { j = { ok: false, error: 'OCUPADO: No hay conexión o el sistema está muy cargado.' }; }
+  if (!j.ok && /^OCUPADO/.test(j.error || '') && intento < 4) {
+    const h = document.querySelector('#app h1'); if (h && intento === 0) h.insertAdjacentHTML('afterend', '<p id="esperando">Hay mucha gente registrándose: esperá unos segundos, reintentamos solos…</p>');
+    await new Promise(r => setTimeout(r, 2000 * (intento + 1) + Math.random() * 2000));
+    return api(accion, datos, intento + 1);
+  }
+  if (!j.ok) throw new Error(String(j.error || 'Error').replace(/^OCUPADO: /, ''));
   return j;
 }
 function pantalla(html, clase) { const a = $('#app'); a.className = 'card ' + (clase || ''); a.innerHTML = html; }
