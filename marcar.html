@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F4E5F">
+<title>Registrar asistencia · Alfabetizadores</title>
+<style>
+  :root{--bg:#F4F1EA;--card:#fff;--ink:#1D2A30;--muted:#5B6B72;--line:#DCD6CA;--pri:#1F4E5F;--pri-soft:#E3EEF1;--ok:#1E7B4F;--ok-soft:#DDF2E6;--bad:#B3261E;--bad-soft:#FBE3E1;--warn:#8A5A00;--warn-soft:#FFF0CC}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 "Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  main{max-width:480px;margin:0 auto;padding:22px 18px 40px}
+  .brand{display:flex;align-items:center;gap:10px;color:var(--pri);font-weight:800;font-size:17px;margin-bottom:18px}
+  .brand i{width:34px;height:34px;border-radius:10px;background:var(--pri);color:#fff;display:grid;place-items:center;font-style:normal}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:24px 20px;text-align:center}
+  h1{font-size:25px;margin:6px 0 8px;line-height:1.2}
+  p{margin:8px 0;color:var(--muted)}
+  .big{font-size:64px;line-height:1;margin:6px 0}
+  .sede{display:inline-block;background:var(--pri-soft);color:var(--pri);border-radius:999px;padding:6px 14px;font-weight:700;margin:6px 0 4px}
+  input{width:100%;font-size:26px;letter-spacing:2px;text-align:center;border:2px solid var(--line);border-radius:14px;padding:14px;margin:14px 0 4px}
+  input:focus{outline:3px solid var(--pri-soft);border-color:var(--pri)}
+  .btn{display:block;width:100%;border:none;border-radius:14px;padding:17px;font-size:20px;font-weight:800;background:var(--pri);color:#fff;margin-top:14px;cursor:pointer}
+  .btn.sec{background:#fff;color:var(--pri);border:2px solid var(--pri)}
+  .btn:disabled{opacity:.55}
+  .ok{background:var(--ok-soft);border-color:#9CD3B5} .ok h1{color:var(--ok)}
+  .bad{background:var(--bad-soft);border-color:#EDB1AB} .bad h1{color:var(--bad)}
+  .warn{background:var(--warn-soft);border-color:#F0D58A} .warn h1{color:var(--warn)}
+  .link{background:none;border:none;color:var(--muted);text-decoration:underline;font-size:15px;margin-top:18px;cursor:pointer}
+  .spin{width:54px;height:54px;border-radius:50%;border:6px solid var(--pri-soft);border-top-color:var(--pri);animation:g 1s linear infinite;margin:10px auto 14px}
+  @keyframes g{to{transform:rotate(360deg)}}
+  small{display:block;color:var(--muted);font-size:14px;margin-top:14px}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><i>✓</i> Asistencia · Alfabetizadores</div>
+  <div id="app" class="card"><div class="spin"></div><p>Cargando…</p></div>
+</main>
+<script>
+// =====================================================================
+//  CONFIGURACIÓN: pegá acá la URL de la aplicación web de Apps Script (termina en /exec)
+const API_URL = 'https://script.google.com/macros/s/AKfycbww3cprV7FhGaERWz2J1PRlDp06hWyCzBc8A95MHuW1TZq0gF4kbAlqKz1sSo0WsyyCOg/exec';
+// =====================================================================
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const q = new URLSearchParams(location.search);
+const SEDE = q.get('s') || '', TOKEN = q.get('t') || '';
+const mem = {
+  get(k) { try { return localStorage.getItem('tdt_' + k) || ''; } catch (e) { return ''; } },
+  set(k, v) { try { localStorage.setItem('tdt_' + k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem('tdt_' + k); } catch (e) {} }
+};
+function dispositivo() {
+  let d = mem.get('dev');
+  if (!d) {
+    d = (crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''));
+    mem.set('dev', d);
+  }
+  return d;
+}
+async function api(accion, datos) {
+  const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'Error');
+  return j;
+}
+function pantalla(html, clase) { const a = $('#app'); a.className = 'card ' + (clase || ''); a.innerHTML = html; }
+
+// ---------- 1. Sin QR ----------
+function sinQr() {
+  pantalla(`<div class="big">📷</div><h1>Escaneá el QR de tu sede</h1><p>Abrí la cámara del celular y apuntá al código que muestra la encargada en la pantalla.</p>
+    ${mem.get('nombre') ? `<small>Este celular está registrado a nombre de <b>${esc(mem.get('nombre'))}</b>.</small>` : ''}`);
+}
+
+// ---------- 2. Primera vez: DNI ----------
+function pedirDni(error) {
+  pantalla(`<div class="big">👋</div><h1>¡Hola! Primera vez en este celular</h1><p>Escribí tu DNI (solo números, sin puntos):</p>
+    <input id="dni" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="40123456">
+    ${error ? `<p style="color:var(--bad);font-weight:700">${esc(error)}</p>` : ''}
+    <button class="btn" id="seguir">Seguir</button><small>Este celular va a quedar asociado a tu nombre para registrar tus asistencias.</small>`);
+  const i = $('#dni'); i.focus();
+  i.oninput = () => i.value = i.value.replace(/\D/g, '');
+  i.onkeydown = e => { if (e.key === 'Enter') $('#seguir').click(); };
+  $('#seguir').onclick = async () => {
+    const dni = i.value.trim();
+    if (!/^\d{7,8}$/.test(dni)) return pedirDni('El DNI tiene que tener 7 u 8 números');
+    $('#seguir').disabled = true; $('#seguir').textContent = 'Buscando…';
+    try {
+      const r = await api('identificar', { dni, dev: dispositivo() });
+      pantalla(`<div class="big">🙂</div><h1>¿Sos ${esc(r.nombre)}?</h1>
+        <button class="btn" id="si">Sí, soy yo</button><button class="btn sec" id="no">No, me equivoqué de DNI</button>`);
+      $('#si').onclick = () => { mem.set('dni', dni); mem.set('nombre', r.nombre); registrar(); };
+      $('#no').onclick = () => pedirDni();
+    } catch (e) { pedirDni(e.message); }
+  };
+}
+
+// ---------- 3. Ubicación ----------
+function ubicacion() {
+  return new Promise((ok, mal) => {
+    if (!navigator.geolocation) return mal(new Error('Este navegador no permite obtener la ubicación.'));
+    let mejor = null, fin = false;
+    const terminar = () => { if (fin) return; fin = true; navigator.geolocation.clearWatch(w); mejor ? ok(mejor) : mal(new Error('No se pudo obtener la ubicación. Activá el GPS e intentá de nuevo.')); };
+    const w = navigator.geolocation.watchPosition(p => {
+      if (!mejor || p.coords.accuracy < mejor.acc) mejor = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+      if (mejor.acc <= 40) terminar();
+    }, e => {
+      if (fin) return; fin = true; navigator.geolocation.clearWatch(w);
+      mal(new Error(e.code === 1 ? 'Necesitamos permiso de ubicación para confirmar que estás en la sede. Tocá "Permitir" cuando el celular lo pregunte (o habilitalo en la configuración del navegador).' : 'No se pudo obtener la ubicación. Activá el GPS e intentá de nuevo.'));
+    }, { enableHighAccuracy: true, timeout: 25000, maximumAge: 0 });
+    setTimeout(terminar, 15000);
+  });
+}
+
+// ---------- 4. Registrar ----------
+async function registrar() {
+  const nombre = mem.get('nombre');
+  pantalla(`<div class="spin"></div><h1>Registrando tu asistencia…</h1><p>Confirmando que estás en la sede. Puede tardar unos segundos.</p><span class="sede">${esc(SEDE)}</span>`);
+  try {
+    const pos = await ubicacion();
+    const r = await api('marcar', { s: SEDE, t: TOKEN, dni: mem.get('dni'), dev: dispositivo(), lat: pos.lat, lng: pos.lng, acc: pos.acc });
+    if (r.estado === 'PENDIENTE') {
+      pantalla(`<div class="big">⏳</div><h1>Quedó pendiente</h1><p>${esc(r.mensaje)}</p><span class="sede">${esc(r.sede)}</span><small>Avisale a la encargada para que la apruebe.</small>`, 'warn');
+    } else {
+      pantalla(`<div class="big">✅</div><h1>¡Listo, ${esc(r.nombre)}!</h1><p>${r.estado === 'YA' ? esc(r.mensaje) : 'Tu asistencia quedó registrada.'}</p>
+        <span class="sede">${esc(r.sede)}</span>${r.hora ? `<p style="font-size:22px;font-weight:800;color:var(--ink)">${esc(r.hora)} hs</p>` : ''}`, 'ok');
+    }
+  } catch (e) {
+    const vencido = /venci|inválido/i.test(e.message);
+    pantalla(`<div class="big">⚠️</div><h1>No se pudo registrar</h1><p style="color:var(--ink)">${esc(e.message)}</p>
+      ${vencido ? '<p>Volvé a escanear el QR de la pantalla.</p>' : '<button class="btn" id="re">Intentar de nuevo</button>'}`, 'bad');
+    const b = $('#re'); if (b) b.onclick = registrar;
+  }
+  agregarCambio(nombre);
+}
+function agregarCambio(nombre) {
+  if (!nombre) return;
+  const b = document.createElement('button'); b.className = 'link'; b.textContent = `¿No sos ${nombre}? Cambiar DNI`;
+  b.onclick = () => { if (confirm('¿Cambiar el DNI asociado a este celular? La próxima asistencia puede quedar pendiente de aprobación.')) { mem.del('dni'); mem.del('nombre'); pedirDni(); } };
+  $('#app').appendChild(b);
+}
+
+// ---------- inicio ----------
+if (API_URL.indexOf('http') !== 0) pantalla('<h1>Falta configurar</h1><p>Pegá la URL de Apps Script en API_URL dentro de marcar.html.</p>', 'bad');
+else if (!SEDE || !TOKEN) sinQr();
+else if (!mem.get('dni')) pedirDni();
+else registrar();
+</script>
+</body>
+</html>
