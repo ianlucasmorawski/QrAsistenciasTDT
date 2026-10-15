@@ -68,12 +68,18 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbww3cprV7FhGaERWz2J1PRl
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const S = { sede: '', tok: '', nombre: '', tieneUbicacion: true, radio: 200, timers: [] };
-async function api(accion, datos) {
-  const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || 'Error');
+async function api(accion, datos, intento = 0) {
+  let j;
+  try {
+    const r = await fetch(API_URL, { method: 'POST', body: JSON.stringify(Object.assign({ accion }, datos)) });
+    j = await r.json();
+  } catch (e) { j = { ok: false, error: 'OCUPADO: sin conexión' }; }
+  if (!j.ok && /^OCUPADO/.test(j.error || '') && intento < 3) { await new Promise(r => setTimeout(r, 1500 * (intento + 1) + Math.random() * 1500)); return api(accion, datos, intento + 1); }
+  if (!j.ok) throw new Error(String(j.error || 'Error').replace(/^OCUPADO: /, ''));
   return j;
 }
+function distM(a1, o1, a2, o2) { const R = 6371000, r = x => x * Math.PI / 180, dA = r(a2 - a1), dO = r(o2 - o1); const h = Math.sin(dA / 2) ** 2 + Math.cos(r(a1)) * Math.cos(r(a2)) * Math.sin(dO / 2) ** 2; return Math.round(2 * R * Math.asin(Math.sqrt(h))); }
+function fDist(m) { return m >= 2000 ? (m / 1000).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' km' : m + ' m'; }
 function toast(m, err) { const t = $('#toast'); t.textContent = m; t.style.background = err ? 'var(--bad)' : 'var(--ink)'; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', err ? 6000 : 3000); }
 const ses = { get() { try { return JSON.parse(sessionStorage.getItem('tdt_enc') || 'null'); } catch (e) { return null; } }, set(v) { try { sessionStorage.setItem('tdt_enc', JSON.stringify(v)); } catch (e) {} }, del() { try { sessionStorage.removeItem('tdt_enc'); } catch (e) {} } };
 
@@ -139,58 +145,92 @@ function principal() {
     ${S.tieneUbicacion ? `<div class="ubic">📍 <b>${esc(S.direccion || S.nombre || S.sede)}</b> · se acepta hasta <b>${esc(S.radio)} m</b>${horario} ·
         <a href="https://www.google.com/maps?q=${S.lat},${S.lng}" target="_blank" rel="noopener">Ver en el mapa ↗</a></div>`
       : `<div class="aviso">⚠️ Esta sede todavía no tiene ubicación cargada, así que nadie puede registrarse. Estando en la sede, tocá <b>“Guardar ubicación de la sede”</b>.</div>`}
+    <div id="chequeo"></div>
     ${esCap && S.pinCap ? `<div class="pinbox">Otras encargadas pueden mostrar este mismo QR en su celular o compu: pestaña <b style="font-size:16px;letter-spacing:0">🎓 Capacitación</b> y PIN <b>${esc(S.pinCap)}</b> (o el PIN de su sede).</div>` : ''}
     <div class="grid">
       <div class="card qrbox"><h2>Escaneá con la cámara del celular</h2>
         <div id="qr"></div><div class="bar"><i id="bar" style="width:100%"></i></div>
         <div class="hint" id="cuenta">El código cambia cada minuto</div></div>
       <div class="card"><h2>${esCap ? 'Registros de la capacitación' : 'Registros de hoy'} <span class="hint" id="cant"></span></h2><div id="lista"><p class="hint">Todavía no hay registros.</p></div>
-        ${esCap ? '<p class="hint" style="margin-top:12px">La lista se comparte entre todas las encargadas que tienen abierto este QR.</p>'
+        ${esCap ? '<p class="hint" style="margin-top:12px">La lista se comparte entre todas las encargadas que tienen abierto este QR.</p><div class="menu"><button class="btn sec sm" id="corregir">📍 Corregir el lugar</button></div>'
           : `<div class="menu">${S.tieneUbicacion ? '' : '<button class="btn sec sm" id="ubic">📍 Guardar ubicación de la sede</button>'}<button class="btn sec sm" id="cerrar">Cerrar el día</button></div>`}</div>
     </div>`;
   $('#salir').onclick = salir;
   if ($('#ubic')) $('#ubic').onclick = guardarUbicacion;
   if ($('#cerrar')) $('#cerrar').onclick = cerrarDia;
+  if ($('#corregir')) $('#corregir').onclick = () => configurarCap('', true);
+  if (S.tieneUbicacion) chequearDistancia();
   pantallaEncendida();
   nuevoQr(); cargarLista();
   S.timers.push(setInterval(cargarLista, 15000));
 }
+/** Compara la ubicación de la encargada con el punto guardado: si está lejos, el punto probablemente está mal. */
+function chequearDistancia() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(p => {
+    const d = distM(p.coords.latitude, p.coords.longitude, +S.lat, +S.lng), acc = Math.round(p.coords.accuracy);
+    const el = $('#chequeo'); if (!el) return;
+    if (d <= +S.radio + Math.min(acc, 300)) { el.innerHTML = `<div class="hint" style="margin:-8px 0 14px">✔ Estás a ${fDist(d)} del punto guardado.</div>`; return; }
+    el.innerHTML = `<div class="aviso">⚠️ Según este equipo estás a <b>${fDist(d)}</b> del punto guardado${acc > 100 ? ` (tu ubicación es aproximada: ±${fDist(acc)})` : ''}.
+      Si estás en el lugar, el punto está mal y nadie va a poder registrarse. ${S.tipo === 'CAP' ? 'Tocá <b>“Corregir el lugar”</b>' : 'Avisale a la coordinación para que lo corrija desde el panel'}.
+      <a href="https://www.google.com/maps?q=${S.lat},${S.lng}" target="_blank" rel="noopener">Ver el punto guardado ↗</a></div>`;
+  }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+}
 function salir() { clearTimeout(siguiente); clearInterval(S._tic); ses.del(); MODO = S.tipo === 'CAP' ? 'cap' : 'sede'; S.tipo = ''; login(); }
 
 // ---------- capacitación sin lugar: la encargada lo carga ----------
-function configurarCap(error) {
-  S.timers.forEach(clearInterval); S.timers = [];
+function configurarCap(error, corregir) {
+  S.timers.forEach(clearInterval); S.timers = []; clearTimeout(siguiente); clearInterval(S._tic);
   $('#app').innerHTML = `<div class="top"><h1>${esc(S.nombre)}<div class="hint" style="font-weight:400">Capacitación · hoy</div></h1><button class="btn sec sm" id="salir">Salir</button></div>
-    <div class="card cfg"><h2>📍 ¿Dónde es la capacitación?</h2>
-      <p class="hint" style="margin-top:0">Se carga una sola vez. Después solo la coordinación la puede cambiar desde el panel.</p>
-      <label>Dirección (es lo que van a ver todos)</label><input id="dir" placeholder="Ej: Universidad, Av. Tratado del Pilar 1250" maxlength="200">
-      <div class="row2"><div><label>Desde (opcional)</label><input id="desde" type="time"></div><div><label>Hasta (opcional)</label><input id="hasta" type="time"></div></div>
+    <div class="card cfg"><h2>📍 ${corregir ? 'Corregir el lugar de la capacitación' : '¿Dónde es la capacitación?'}</h2>
+      <p class="hint" style="margin-top:0">${corregir ? 'Se puede corregir mientras nadie se haya registrado todavía.' : 'Se carga una vez. Se puede corregir mientras nadie se haya registrado.'}</p>
+      <label>Dirección (es lo que van a ver todos)</label><input id="dir" placeholder="Ej: Granaderos 1008, Del Viso" maxlength="200" value="${esc(S.direccion || '')}">
+      <div class="row2"><div><label>Desde (opcional)</label><input id="desde" type="time" value="${esc(S.desde || '')}"></div><div><label>Hasta (opcional)</label><input id="hasta" type="time" value="${esc(S.hasta || '')}"></div></div>
       <label>Distancia permitida (metros)</label><input id="radio" type="number" inputmode="numeric" value="${esc(S.radio || 300)}" min="50" max="2000">
       ${error ? `<div class="err">${esc(error)}</div>` : ''}
-      <button class="btn full" id="gps">📍 Usar mi ubicación actual (estoy en el lugar)</button>
+      <div id="propuesta"></div>
+      <button class="btn full" id="gps">📍 Usar mi ubicación actual (celular, estando en el lugar)</button>
+      <button class="btn sec full" id="buscar">🔎 Buscar la dirección en el mapa</button>
       <p class="o">— o —</p>
       <label>Pegá el link de Google Maps del lugar</label><input id="link" placeholder="https://maps.app.goo.gl/…">
-      <button class="btn sec full" id="conLink">Guardar con el link</button></div>`;
+      <button class="btn sec full" id="conLink">Guardar con el link</button>
+      ${corregir ? '<button class="btn sec full" id="volver">← Volver al QR</button>' : ''}</div>`;
   $('#salir').onclick = salir;
+  if ($('#volver')) $('#volver').onclick = principal;
   const datos = () => ({ sede: S.sede, tok: S.tok, direccion: $('#dir').value.trim(), desde: $('#desde').value, hasta: $('#hasta').value, radio: $('#radio').value });
+  const ocupado = (b, on, txt) => { b.disabled = on; if (txt) b.textContent = txt; };
   const enviar = async (extra, boton) => {
     const d = Object.assign(datos(), extra);
     if (!d.direccion) return toast('Escribí la dirección del lugar', true);
-    boton.disabled = true; const txt = boton.textContent; boton.textContent = 'Guardando…';
-    try { const r = await api('guardarUbicacion', d); entrar(Object.assign(r, { tok: S.tok })); toast('✔ Lugar guardado'); }
-    catch (e) { boton.disabled = false; boton.textContent = txt; toast(e.message, true); }
+    const txt = boton.textContent; ocupado(boton, true, 'Guardando…');
+    try { const r = await api('guardarUbicacion', d); entrar(Object.assign(r, { tok: S.tok })); toast('✔ Lugar guardado: revisá que el punto del mapa sea correcto'); }
+    catch (e) { ocupado(boton, false, txt); toast(e.message, true); }
   };
   $('#conLink').onclick = () => { if (!$('#link').value.trim()) return toast('Pegá el link de Google Maps', true); enviar({ link: $('#link').value.trim() }, $('#conLink')); };
+  $('#buscar').onclick = async () => {
+    const d = datos(); if (!d.direccion) return toast('Escribí la dirección del lugar', true);
+    const b = $('#buscar'); ocupado(b, true, 'Buscando…');
+    try {
+      const r = await api('guardarUbicacion', Object.assign(d, { buscar: true })), q = r.propuesta;
+      $('#propuesta').innerHTML = `<div class="pinbox" style="margin-top:16px">¿Es este lugar? <b style="font-size:17px;letter-spacing:0">${esc(q.texto)}</b>
+        ${q.exacto ? '' : '<br>⚠️ Google no encontró la dirección exacta: revisá bien el mapa.'}<br><a href="https://www.google.com/maps?q=${q.lat},${q.lng}" target="_blank" rel="noopener">Abrir en el mapa para controlar ↗</a>
+        <div class="menu"><button class="btn ok sm" id="si">Sí, es acá</button><button class="btn bad sm" id="no">No</button></div></div>`;
+      $('#si').onclick = () => enviar({ lat: q.lat, lng: q.lng, acc: 0, confirmada: true }, $('#si'));
+      $('#no').onclick = () => { $('#propuesta').innerHTML = '<p class="hint">Probá escribir la dirección con la localidad, usar el celular en el lugar o pegar el link.</p>'; };
+    } catch (e) { toast(e.message, true); }
+    ocupado(b, false, '🔎 Buscar la dirección en el mapa');
+  };
   $('#gps').onclick = () => {
     if (!$('#dir').value.trim()) return toast('Primero escribí la dirección del lugar', true);
     if (!navigator.geolocation) return toast('Este navegador no permite obtener la ubicación', true);
-    const b = $('#gps'); b.disabled = true; b.textContent = 'Obteniendo ubicación… (10 s)';
+    const b = $('#gps'); ocupado(b, true, 'Obteniendo ubicación… (10 s)');
     let mejor = null;
     const w = navigator.geolocation.watchPosition(p => { if (!mejor || p.coords.accuracy < mejor.coords.accuracy) mejor = p; },
       () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
     setTimeout(() => {
-      navigator.geolocation.clearWatch(w); b.disabled = false; b.textContent = '📍 Usar mi ubicación actual (estoy en el lugar)';
-      if (!mejor) return toast('No se pudo obtener la ubicación: activá el GPS y permití el acceso, o usá el link de Google Maps', true);
+      navigator.geolocation.clearWatch(w); ocupado(b, false, '📍 Usar mi ubicación actual (celular, estando en el lugar)');
+      if (!mejor) return toast('No se pudo obtener la ubicación: activá el GPS y permití el acceso, o usá "Buscar la dirección"', true);
+      if (mejor.coords.accuracy > 60) return toast('Tu equipo da una ubicación aproximada (±' + Math.round(mejor.coords.accuracy) + ' m), algo común en computadoras. Usá el celular, "Buscar la dirección" o el link.', true);
       enviar({ lat: mejor.coords.latitude, lng: mejor.coords.longitude, acc: mejor.coords.accuracy }, b);
     }, 10000);
   };
