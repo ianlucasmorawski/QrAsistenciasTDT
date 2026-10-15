@@ -43,6 +43,14 @@
   .ubic{background:var(--ok-soft);color:#14532d;border-radius:14px;padding:12px 16px;margin-bottom:16px;font-size:16px}
   .ubic a{color:var(--pri);font-weight:700}
   h2{font-size:20px;margin:0 0 10px}
+  .tabs{display:flex;gap:8px;margin:16px 0 4px}
+  .tabs button{flex:1;border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px;font-size:17px;font-weight:800;color:var(--muted);cursor:pointer}
+  .tabs button.on{border-color:var(--pri);background:var(--pri-soft);color:var(--pri)}
+  .cfg{max-width:620px;margin:0 auto}
+  .row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+  .o{text-align:center;color:var(--muted);font-weight:700;margin:14px 0 0}
+  .pinbox{background:var(--pri-soft);color:var(--pri);border-radius:14px;padding:12px 16px;margin-bottom:16px;font-size:16px}
+  .pinbox b{font-size:22px;letter-spacing:3px}
   @media (max-width:820px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -70,53 +78,122 @@ function toast(m, err) { const t = $('#toast'); t.textContent = m; t.style.backg
 const ses = { get() { try { return JSON.parse(sessionStorage.getItem('tdt_enc') || 'null'); } catch (e) { return null; } }, set(v) { try { sessionStorage.setItem('tdt_enc', JSON.stringify(v)); } catch (e) {} }, del() { try { sessionStorage.removeItem('tdt_enc'); } catch (e) {} } };
 
 // ---------- ingreso ----------
-async function login(error, sedePrevia) {
+let MODO = 'sede';
+async function login(error, previa) {
   S.timers.forEach(clearInterval); S.timers = [];
-  $('#app').innerHTML = `<div class="card login"><h1 style="margin:0 0 6px">QR de asistencia</h1><p class="hint" style="margin:0">Para encargadas de sede</p>
-    <label>Sede</label><select id="sede"><option>Cargando…</option></select>
-    <label>PIN de la sede</label><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+  const esCap = MODO === 'cap';
+  $('#app').innerHTML = `<div class="card login"><h1 style="margin:0 0 6px">QR de asistencia</h1><p class="hint" style="margin:0">Para encargadas</p>
+    <div class="tabs"><button id="tSede" class="${esCap ? '' : 'on'}">🏠 Sede</button><button id="tCap" class="${esCap ? 'on' : ''}">🎓 Capacitación</button></div>
+    ${esCap ? `<label>Capacitación de hoy</label><select id="cap"><option>Cargando…</option></select>
+      <label>¿Con qué PIN entrás?</label><select id="sede"><option value="">PIN de la capacitación</option></select>
+      <label id="lpin">PIN</label>`
+    : `<label>Sede</label><select id="sede"><option>Cargando…</option></select><label>PIN de la sede</label>`}
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <button class="btn full" id="entrar">Entrar</button></div>`;
+  $('#tSede').onclick = () => { MODO = 'sede'; login(); };
+  $('#tCap').onclick = () => { MODO = 'cap'; login(); };
+  const ult = (previa && previa.sede) || localStorage.getItem('tdt_sede');
   try {
     const r = await api('sedes', {});
-    $('#sede').innerHTML = '<option value="">Elegí tu sede…</option>' + r.sedes.map(s => `<option>${esc(s)}</option>`).join('');
-    const ult = sedePrevia || localStorage.getItem('tdt_sede'); if (ult) $('#sede').value = ult;
-  } catch (e) { $('#sede').innerHTML = '<option value="">No se pudo cargar</option>'; }
+    $('#sede').innerHTML = (esCap ? '<option value="">PIN de la capacitación</option>' + r.sedes.map(x => `<option value="${esc(x)}">PIN de mi sede: ${esc(x)}</option>`).join('')
+      : '<option value="">Elegí tu sede…</option>' + r.sedes.map(x => `<option>${esc(x)}</option>`).join(''));
+    if (ult) $('#sede').value = ult;
+    if (esCap && previa && previa.sede === '') $('#sede').value = '';
+  } catch (e) { if (!esCap) $('#sede').innerHTML = '<option value="">No se pudo cargar</option>'; }
+  if (esCap) {
+    try {
+      const r = await api('capsHoy', {});
+      $('#cap').innerHTML = r.caps.length ? r.caps.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}${c.lista ? '' : ' (falta cargar el lugar)'}</option>`).join('')
+        : '<option value="">No hay capacitaciones cargadas para hoy</option>';
+      if (previa && previa.cap) $('#cap').value = previa.cap;
+    } catch (e) { $('#cap').innerHTML = '<option value="">No se pudo cargar</option>'; }
+  }
   $('#pin').onkeydown = e => { if (e.key === 'Enter') $('#entrar').click(); };
   $('#entrar').onclick = async () => {
-    const sede = $('#sede').value, pin = $('#pin').value.trim();
-    if (!sede || !pin) return login('Elegí la sede y escribí el PIN', sede);
+    const sede = $('#sede').value, pin = $('#pin').value.trim(), cap = esCap ? $('#cap').value : '';
+    if (esCap && !cap) return login('No hay una capacitación de hoy para elegir. La coordinación la crea en el panel (Capacitaciones → Nueva).', { sede });
+    if ((!esCap && !sede) || !pin) return login(esCap ? 'Escribí el PIN' : 'Elegí la sede y escribí el PIN', { sede, cap });
     $('#entrar').disabled = true; $('#entrar').textContent = 'Entrando…';
     try {
-      const r = await api('encargadaLogin', { sede, pin });
-      try { localStorage.setItem('tdt_sede', sede); } catch (e) {}
-      Object.assign(S, { sede: r.sede, tok: r.tok, nombre: r.nombre, tieneUbicacion: r.tieneUbicacion, radio: r.radio, lat: r.lat, lng: r.lng, direccion: r.direccion || '' });
-      ses.set({ sede: S.sede, tok: S.tok, nombre: S.nombre, tieneUbicacion: S.tieneUbicacion, radio: S.radio, lat: S.lat, lng: S.lng, direccion: S.direccion, dia: new Date().toDateString() });
-      principal();
-    } catch (e) { login(e.message, sede); }
+      const r = await api('encargadaLogin', esCap ? { cap, sede, pin } : { sede, pin });
+      try { if (sede) localStorage.setItem('tdt_sede', sede); } catch (e) {}
+      entrar(r);
+    } catch (e) { login(e.message, { sede, cap }); }
   };
+}
+const CAMPOS = ['sede', 'tok', 'tipo', 'nombre', 'tieneUbicacion', 'radio', 'lat', 'lng', 'direccion', 'desde', 'hasta', 'pinCap'];
+function entrar(r) {
+  CAMPOS.forEach(k => S[k] = r[k] == null ? '' : r[k]);
+  const g = { dia: new Date().toDateString() }; CAMPOS.forEach(k => g[k] = S[k]); ses.set(g);
+  principal();
 }
 
 // ---------- pantalla principal ----------
 function principal() {
-  $('#app').innerHTML = `<div class="top"><h1>${esc(S.sede)}<div class="hint" style="font-weight:400">${esc(S.nombre || '')}</div></h1>
+  const esCap = S.tipo === 'CAP';
+  if (esCap && !S.tieneUbicacion) return configurarCap();
+  const horario = S.desde || S.hasta ? ` · horario <b>${esc(S.desde || '…')}–${esc(S.hasta || '…')}</b>` : '';
+  $('#app').innerHTML = `<div class="top"><h1>${esc(esCap ? S.nombre : S.sede)}<div class="hint" style="font-weight:400">${esc(esCap ? 'Capacitación · hoy' : S.nombre || '')}</div></h1>
       <button class="btn sec sm" id="salir">Salir</button></div>
-    ${S.tieneUbicacion ? `<div class="ubic">📍 <b>${esc(S.direccion || S.nombre || S.sede)}</b> · se acepta hasta <b>${esc(S.radio)} m</b> ·
+    ${S.tieneUbicacion ? `<div class="ubic">📍 <b>${esc(S.direccion || S.nombre || S.sede)}</b> · se acepta hasta <b>${esc(S.radio)} m</b>${horario} ·
         <a href="https://www.google.com/maps?q=${S.lat},${S.lng}" target="_blank" rel="noopener">Ver en el mapa ↗</a></div>`
       : `<div class="aviso">⚠️ Esta sede todavía no tiene ubicación cargada, así que nadie puede registrarse. Estando en la sede, tocá <b>“Guardar ubicación de la sede”</b>.</div>`}
+    ${esCap && S.pinCap ? `<div class="pinbox">Otras encargadas pueden mostrar este mismo QR en su celular o compu: pestaña <b style="font-size:16px;letter-spacing:0">🎓 Capacitación</b> y PIN <b>${esc(S.pinCap)}</b> (o el PIN de su sede).</div>` : ''}
     <div class="grid">
       <div class="card qrbox"><h2>Escaneá con la cámara del celular</h2>
         <div id="qr"></div><div class="bar"><i id="bar" style="width:100%"></i></div>
         <div class="hint" id="cuenta">El código cambia cada minuto</div></div>
-      <div class="card"><h2>Registros de hoy <span class="hint" id="cant"></span></h2><div id="lista"><p class="hint">Todavía no hay registros.</p></div>
-        <div class="menu">${S.tieneUbicacion ? '' : '<button class="btn sec sm" id="ubic">📍 Guardar ubicación de la sede</button>'}<button class="btn sec sm" id="cerrar">Cerrar el día</button></div></div>
+      <div class="card"><h2>${esCap ? 'Registros de la capacitación' : 'Registros de hoy'} <span class="hint" id="cant"></span></h2><div id="lista"><p class="hint">Todavía no hay registros.</p></div>
+        ${esCap ? '<p class="hint" style="margin-top:12px">La lista se comparte entre todas las encargadas que tienen abierto este QR.</p>'
+          : `<div class="menu">${S.tieneUbicacion ? '' : '<button class="btn sec sm" id="ubic">📍 Guardar ubicación de la sede</button>'}<button class="btn sec sm" id="cerrar">Cerrar el día</button></div>`}</div>
     </div>`;
-  $('#salir').onclick = () => { ses.del(); login(); };
+  $('#salir').onclick = salir;
   if ($('#ubic')) $('#ubic').onclick = guardarUbicacion;
-  $('#cerrar').onclick = cerrarDia;
+  if ($('#cerrar')) $('#cerrar').onclick = cerrarDia;
   pantallaEncendida();
   nuevoQr(); cargarLista();
   S.timers.push(setInterval(cargarLista, 15000));
+}
+function salir() { clearTimeout(siguiente); clearInterval(S._tic); ses.del(); MODO = S.tipo === 'CAP' ? 'cap' : 'sede'; S.tipo = ''; login(); }
+
+// ---------- capacitación sin lugar: la encargada lo carga ----------
+function configurarCap(error) {
+  S.timers.forEach(clearInterval); S.timers = [];
+  $('#app').innerHTML = `<div class="top"><h1>${esc(S.nombre)}<div class="hint" style="font-weight:400">Capacitación · hoy</div></h1><button class="btn sec sm" id="salir">Salir</button></div>
+    <div class="card cfg"><h2>📍 ¿Dónde es la capacitación?</h2>
+      <p class="hint" style="margin-top:0">Se carga una sola vez. Después solo la coordinación la puede cambiar desde el panel.</p>
+      <label>Dirección (es lo que van a ver todos)</label><input id="dir" placeholder="Ej: Universidad, Av. Tratado del Pilar 1250" maxlength="200">
+      <div class="row2"><div><label>Desde (opcional)</label><input id="desde" type="time"></div><div><label>Hasta (opcional)</label><input id="hasta" type="time"></div></div>
+      <label>Distancia permitida (metros)</label><input id="radio" type="number" inputmode="numeric" value="${esc(S.radio || 300)}" min="50" max="2000">
+      ${error ? `<div class="err">${esc(error)}</div>` : ''}
+      <button class="btn full" id="gps">📍 Usar mi ubicación actual (estoy en el lugar)</button>
+      <p class="o">— o —</p>
+      <label>Pegá el link de Google Maps del lugar</label><input id="link" placeholder="https://maps.app.goo.gl/…">
+      <button class="btn sec full" id="conLink">Guardar con el link</button></div>`;
+  $('#salir').onclick = salir;
+  const datos = () => ({ sede: S.sede, tok: S.tok, direccion: $('#dir').value.trim(), desde: $('#desde').value, hasta: $('#hasta').value, radio: $('#radio').value });
+  const enviar = async (extra, boton) => {
+    const d = Object.assign(datos(), extra);
+    if (!d.direccion) return toast('Escribí la dirección del lugar', true);
+    boton.disabled = true; const txt = boton.textContent; boton.textContent = 'Guardando…';
+    try { const r = await api('guardarUbicacion', d); entrar(Object.assign(r, { tok: S.tok })); toast('✔ Lugar guardado'); }
+    catch (e) { boton.disabled = false; boton.textContent = txt; toast(e.message, true); }
+  };
+  $('#conLink').onclick = () => { if (!$('#link').value.trim()) return toast('Pegá el link de Google Maps', true); enviar({ link: $('#link').value.trim() }, $('#conLink')); };
+  $('#gps').onclick = () => {
+    if (!$('#dir').value.trim()) return toast('Primero escribí la dirección del lugar', true);
+    if (!navigator.geolocation) return toast('Este navegador no permite obtener la ubicación', true);
+    const b = $('#gps'); b.disabled = true; b.textContent = 'Obteniendo ubicación… (10 s)';
+    let mejor = null;
+    const w = navigator.geolocation.watchPosition(p => { if (!mejor || p.coords.accuracy < mejor.coords.accuracy) mejor = p; },
+      () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    setTimeout(() => {
+      navigator.geolocation.clearWatch(w); b.disabled = false; b.textContent = '📍 Usar mi ubicación actual (estoy en el lugar)';
+      if (!mejor) return toast('No se pudo obtener la ubicación: activá el GPS y permití el acceso, o usá el link de Google Maps', true);
+      enviar({ lat: mejor.coords.latitude, lng: mejor.coords.longitude, acc: mejor.coords.accuracy }, b);
+    }, 10000);
+  };
 }
 let restante = 30, siguiente = null;
 async function nuevoQr() {
@@ -143,7 +220,7 @@ function tic() {
 async function cargarLista() {
   try {
     const r = await api('hoy', { sede: S.sede, tok: S.tok });
-    const l = r.registros.filter(x => x.resultado !== 'UBICACIÓN');
+    const l = r.registros.filter(x => x.resultado !== 'UBICACIÓN' && x.resultado !== 'INGRESO');
     const ok = l.filter(x => x.resultado === 'ACEPTADO').length, pen = l.filter(x => x.resultado === 'PENDIENTE').length;
     $('#cant').textContent = `· ${ok} presentes${pen ? ` · ${pen} pendientes` : ''}`;
     $('#lista').innerHTML = l.length ? l.map(x => `<div class="reg"><div class="who"><b>${esc(x.nombre || 'Sin identificar')}</b><small>${esc(x.hora)} hs${x.motivo ? ' · ' + esc(x.motivo) : ''}</small></div>
@@ -155,7 +232,7 @@ async function cargarLista() {
 async function decidir(id, decision, puedeVincular) {
   let vincular = false;
   if (decision === 'APROBAR') {
-    if (!confirm('¿Confirmás que esta persona está presente en la sede?')) return;
+    if (!confirm(S.tipo === 'CAP' ? '¿Confirmás que esta persona está presente en la capacitación?' : '¿Confirmás que esta persona está presente en la sede?')) return;
     if (puedeVincular) vincular = confirm('¿Es su celular nuevo? Si aceptás, las próximas veces se registra sin pedir aprobación.');
   } else if (!confirm('¿Rechazar este registro?')) return;
   try { await api('decidir', { sede: S.sede, tok: S.tok, registro: id, decision, vincular }); toast(decision === 'APROBAR' ? '✔ Aprobado' : 'Rechazado'); cargarLista(); }
@@ -188,7 +265,7 @@ async function pantallaEncendida() { try { if (navigator.wakeLock) { S.wl = awai
 
 // ---------- inicio ----------
 if (API_URL.indexOf('http') !== 0) $('#app').innerHTML = '<div class="card login"><h1>Falta configurar</h1><p>Pegá la URL de Apps Script en API_URL dentro de encargada.html.</p></div>';
-else { const s = ses.get(); if (s && s.dia === new Date().toDateString()) { Object.assign(S, s); principal(); } else login(); }
+else { const s = ses.get(); if (s && s.dia === new Date().toDateString()) { Object.assign(S, s); MODO = S.tipo === 'CAP' ? 'cap' : 'sede'; principal(); } else login(); }
 </script>
 </body>
 </html>
